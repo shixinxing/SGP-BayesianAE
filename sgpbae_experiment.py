@@ -1,8 +1,11 @@
+# Converted script from torch 1.8 to torch 2.5.
+# Changes are minimal, keeping the structure and logic similar.
+# Updated components are marked with comments for easier identification.
+
 import os
 import sys
 import torch
 import torch.nn.functional as F
-import torch.nn as nn
 import numpy as np
 import torch.optim as optim
 import matplotlib.pyplot as plt
@@ -23,6 +26,7 @@ from gp.kernels import MNISTKernel
 from gp.likelihoods import Gaussian
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 FLAGS = absl.app.flags.FLAGS
@@ -58,7 +62,9 @@ f.DEFINE_integer("collect_every", 10, "The thinning interval")
 FLAGS(sys.argv)
 set_seed(FLAGS.seed)
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+torch.set_default_dtype(torch.float64)  # Set default dtype to ensure model precision consistency
 
 # Setup
 BASE_DIR = FLAGS.out_dir
@@ -71,44 +77,36 @@ ensure_dir(LOG_DIR)
 
 logger = setup_logging(LOG_DIR)
 
-logger.info("====="*20)
+logger.info("=====" * 20)
 for k, v in FLAGS.flag_values_dict().items():
     logger.info(">> {}: {}".format(k, v))
 
 ending = FLAGS.dataset + ".p"
 
 # Load data
-train_data, eval_data, test_data = import_rotated_mnist(
-    FLAGS.data_path, ending, FLAGS.batch_size)
+train_data, eval_data, test_data = import_rotated_mnist(FLAGS.data_path, ending, FLAGS.batch_size)
 
 inducing_points_init = generate_init_inducing_points(
     FLAGS.data_path + "train_data" + ending,
     n=FLAGS.nr_inducing_points, remove_test_angle=None,
     PCA=FLAGS.PCA, M=FLAGS.M)
-inducing_points_init = torch.Tensor(inducing_points_init).double().to(device)
+inducing_points_init = torch.tensor(inducing_points_init).to(device)
 
-object_vectors_init = pickle.load(
-     open(FLAGS.data_path + 'pca_ov_init{}.p'.format(FLAGS.dataset), 'rb'))
-object_vectors_init = torch.Tensor(object_vectors_init).double().to(device)
+object_vectors_init = pickle.load(open(FLAGS.data_path + 'pca_ov_init{}.p'.format(FLAGS.dataset), 'rb'))
+object_vectors_init = torch.tensor(object_vectors_init).to(device)
 
 # Create dataloaders
-train_dataset = TensorDataset(torch.Tensor(train_data['images']).permute(0, 3, 1, 2).to(device),
-                              torch.Tensor(train_data['aux_data']).to(device))
-train_dataloader = DataLoader(train_dataset,
-                              batch_size=FLAGS.batch_size, shuffle=True,
-                              drop_last=True)   
+train_dataset = TensorDataset(torch.tensor(train_data['images']).permute(0, 3, 1, 2).to(device),
+                              torch.tensor(train_data['aux_data']).to(device))
+train_dataloader = DataLoader(train_dataset, batch_size=FLAGS.batch_size, shuffle=True, drop_last=True)
 
-eval_dataset = TensorDataset(torch.Tensor(eval_data['images']).permute(0, 3, 1, 2).to(device),
-                              torch.Tensor(eval_data['aux_data']).to(device))
-eval_dataloader = DataLoader(eval_dataset,
-                             batch_size=len(eval_dataset), shuffle=False,
-                             drop_last=True)
+eval_dataset = TensorDataset(torch.tensor(eval_data['images']).permute(0, 3, 1, 2).to(device),
+                             torch.tensor(eval_data['aux_data']).to(device))
+eval_dataloader = DataLoader(eval_dataset, batch_size=len(eval_dataset), shuffle=False, drop_last=True)
 
-test_dataset = TensorDataset(torch.Tensor(test_data['images']).permute(0, 3, 1, 2).to(device),
-                             torch.Tensor(test_data['aux_data']).to(device))
-test_dataloader = DataLoader(test_dataset,
-                             batch_size=len(test_dataset), shuffle=False,
-                             drop_last=True)
+test_dataset = TensorDataset(torch.tensor(test_data['images']).permute(0, 3, 1, 2).to(device),
+                             torch.tensor(test_data['aux_data']).to(device))
+test_dataloader = DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False, drop_last=True)
 
 n_data = len(train_dataset)
 
@@ -124,13 +122,13 @@ decoder_prior = PriorGaussian(FLAGS.decoder_var)
 
 # Initialize the Bayesian Autoencoder
 encoder = encoder_net
-decoder = ConditionalMeanNormal(decoder_net, scale=1) 
+decoder = ConditionalMeanNormal(decoder_net, scale=1)
 
 model = SGPBAE(decoder, encoder, decoder_prior, FLAGS.optim_gp)
 
 # Sample a batch of data
 data = next(iter(train_dataloader))
-Y = data[0] # BCHW
+Y = data[0]  # BCHW
 X = data[1]
 
 # Initialize the latent variable
@@ -138,14 +136,14 @@ model.init_z(Y)
 
 # Initialize the GP Prior
 kernel = MNISTKernel(input_dim=10, ARD=False,
-                     variance=torch.tensor([FLAGS.variance], dtype=torch.double),
-                     lengthscales=torch.tensor([1], dtype=torch.double),
-                     period=torch.tensor([2*np.pi], dtype=torch.double),
+                     variance=torch.tensor([FLAGS.variance]),
+                     lengthscales=torch.tensor([1]),
+                     period=torch.tensor([2 * np.pi]),
                      object_vectors=object_vectors_init)
 likelihood = Gaussian(variance=FLAGS.likelihood_var)
 
 n_inducing = inducing_points_init.shape[1]
-gp = BSGP(X, model.Z.double(),
+gp = BSGP(X, model.Z,
           kernel, likelihood, FLAGS.inducing_prior,
           inputs=X.shape[-1], outputs=FLAGS.latent_size, n_data=n_data,
           inducing_points_init=inducing_points_init, full_cov=False)
@@ -159,11 +157,10 @@ model.init_gp(gp)
 
 # Train model
 if FLAGS.train:
-
     # Initialize the sampler for BAE
-    bae_sampler = AdaptiveSGHMC(model.get_parameters(),
-                                lr=FLAGS.lr, num_burn_in_steps=2000,
-                                mdecay=FLAGS.mdecay, scale_grad=n_data)
+    bae_sampler = AdaptiveSGHMC(
+        model.get_parameters(), lr=FLAGS.lr, num_burn_in_steps=2000, mdecay=FLAGS.mdecay, scale_grad=n_data
+    )
 
     # Initialize the optimizer for the encoder
     encoder_optimizer = optim.Adam(encoder.parameters(), lr=1e-3)
@@ -175,26 +172,25 @@ if FLAGS.train:
 
     # Start sampling
     iter = 0
-    sample_idx = 0  
+    sample_idx = 0
 
     for data in inf_loop(train_dataloader):
         if iter > n_sampling_iters:
             break
 
-        Y = data[0] # BCHW
+        Y = data[0]  # BCHW
         X = data[1]
 
         model.init_z(Y)
 
         # Sample the latent variables and decoder parameters
         for k in range(FLAGS.K):
-            log_prob, log_lik, log_prior, gp_log_lik = model.log_prob(
-                Y, X, n_data)
+            log_prob, log_lik, log_prior, gp_log_lik = model.log_prob(Y, X, n_data)
             bae_sampler.zero_grad()
             bae_loss = -log_prob
             bae_loss.backward()
             bae_sampler.step()
-        
+
         # Update the encoder
         for j in range(FLAGS.J):
             encoder_optimizer.zero_grad()
@@ -210,7 +206,7 @@ if FLAGS.train:
 
         if iter % 10 == 0:
             logger.info("Iter: {}/{}, log_joint: {:.5f}, log_lik: {:.5f}, log_prior: {:.5f}, gp_log_lik: {:.5f}".format(
-                iter, n_sampling_iters, log_prob.detach(), log_lik.detach(), log_prior.detach(), gp_log_lik.detach()))  
+                iter, n_sampling_iters, log_prob.detach(), log_lik.detach(), log_prior.detach(), gp_log_lik.detach()))
             logger.info("Iter: {}/{}, z_loss: {:.5f}".format(
                 iter, n_sampling_iters, z_loss.detach()))
 
@@ -231,20 +227,20 @@ if FLAGS.train:
                 iter, n_sampling_iters, MSE))
 
             plot_mnist(Ys.permute(0, 2, 3, 1).detach().cpu().numpy(),
-                    Y_preds.permute(0, 2, 3, 1).detach().cpu().numpy(),
-                    "Iter: {}, Test MSE: {:.5f}".format(iter, MSE))
+                       Y_preds.permute(0, 2, 3, 1).detach().cpu().numpy(),
+                       "Iter: {}, Test MSE: {:.5f}".format(iter, MSE))
             plt.savefig(os.path.join(FIGS_DIR, "cgen_iter_{}.png".format(iter)))
 
             plot_mnist(Ys.permute(0, 2, 3, 1).detach().cpu().numpy(),
-                    Y_preds.permute(0, 2, 3, 1).detach().cpu().numpy(),
-                    "Iter: {}, Test MSE: {:.5f}".format(iter, MSE))
+                       Y_preds.permute(0, 2, 3, 1).detach().cpu().numpy(),
+                       "Iter: {}, Test MSE: {:.5f}".format(iter, MSE))
             plt.savefig(os.path.join(FIGS_DIR, "cgen.png".format(iter)))
 
         iter += 1
 
 # Test model
 model.set_samples(SAMPLES_DIR, cache=True)
- 
+
 # Evaluate conditional generatation on test set
 Ys = []
 Y_preds = []
@@ -268,12 +264,10 @@ plot_mnist(Ys.permute(0, 2, 3, 1).detach().cpu().numpy(),
            "Test MSE: {:.5f}".format(MSE))
 plt.savefig(os.path.join(FIGS_DIR, "cgen.png"))
 
-
 plot_mnist(Ys.permute(0, 2, 3, 1).detach().cpu().numpy(),
            Y_vars.permute(0, 2, 3, 1).detach().cpu().numpy(),
            "Uncertainty Estimate")
 plt.savefig(os.path.join(FIGS_DIR, "cgen_uncertainty.png"))
-
 
 Ys = Ys.detach().cpu().numpy()
 Y_preds = Y_preds.detach().cpu().numpy()
