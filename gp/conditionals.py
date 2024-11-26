@@ -69,25 +69,26 @@ def conditional(Xnew, X, kern, f, full_cov=False, q_sqrt=None, whiten=False,
     num_data = X.size(0)  # M
     num_func = f.size(1)  # K
     Kmn = kern.K(X, Xnew, X_inducing=True, X2_inducing=False)
-    Kmm = kern.K(X, X, X_inducing=True, X2_inducing=True) + torch.eye(num_data, dtype=X.dtype, device=X.device) * jitter_level
-    Lm = torch.cholesky(Kmm, upper=False)
+    Kmm = kern.K(X, X, X_inducing=True, X2_inducing=True) + torch.eye(num_data, dtype=X.dtype,
+                                                                      device=X.device) * jitter_level
+    Lm = torch.linalg.cholesky(Kmm)
 
     # Compute the projection matrix A
-    A, _ = torch.solve(Kmn, Lm)
+    A = torch.linalg.solve_triangular(Lm, Kmn, upper=False)
 
     # compute the covariance due to the conditioning
     if full_cov:
         fvar = kern.K(Xnew, Xnew, X_inducing=False, X2_inducing=False) - torch.matmul(A.t(), A)
-        fvar = fvar.unsqueeze(0).expand(num_func, -1, -1) # K x N x N
+        fvar = fvar.unsqueeze(0).expand(num_func, -1, -1)  # K x N x N
     else:
-        fvar = kern.Kdiag(Xnew, X_inducing=False) - (A**2).sum(0)
-        fvar = fvar.unsqueeze(0).expand(num_func, -1) # K x N
+        fvar = kern.Kdiag(Xnew, X_inducing=False) - (A ** 2).sum(0)
+        fvar = fvar.unsqueeze(0).expand(num_func, -1)  # K x N
     # fvar is K x N x N or K x N
 
-    # another backsubstitution in the unwhitened case 
+    # another backsubstitution in the unwhitened case
     # (complete the inverse of the cholesky decomposition)
     if not whiten:
-        A, _ = torch.solve(A, Lm.t())
+        A = torch.linalg.solve_triangular(Lm.t(), A, upper=True)
 
     # construct the conditional mean
     fmean = torch.matmul(A.t(), f)
@@ -103,8 +104,8 @@ def conditional(Xnew, X, kern, f, full_cov=False, q_sqrt=None, whiten=False,
         if full_cov:
             fvar = fvar + torch.matmul(LTA.t(), LTA)  # K x N x N
         else:
-            fvar = fvar + (LTA**2).sum(1)  # K x N
-    fvar = fvar.permute(*range(fvar.dim()-1, -1, -1))  # N x K or N x N x K
+            fvar = fvar + (LTA ** 2).sum(1)  # K x N
+    fvar = fvar.permute(*range(fvar.dim() - 1, -1, -1))  # N x K or N x N x K
 
     if return_Lm:
         return fmean, fvar, Lm
@@ -112,9 +113,8 @@ def conditional(Xnew, X, kern, f, full_cov=False, q_sqrt=None, whiten=False,
     return fmean, fvar
 
 
-
 def conditional2(Xnew, X, kern, f, full_cov=False, q_sqrt=None, whiten=False,
-                jitter_level=1e-6, return_Lm=False, return_trace=False):
+                 jitter_level=1e-6, return_Lm=False, return_trace=False):
     """
     Given F, representing the GP at the points X, produce the mean and
     (co-)variance of the GP at the points Xnew.
@@ -153,27 +153,29 @@ def conditional2(Xnew, X, kern, f, full_cov=False, q_sqrt=None, whiten=False,
     num_data = X.size(0)  # M
     num_func = f.size(1)  # K
     Kmn = kern.K(X, Xnew, X_inducing=True, X2_inducing=False)
-    Kmm = kern.K(X, X, X_inducing=True, X2_inducing=True) + torch.eye(num_data, dtype=X.dtype, device=X.device) * jitter_level
+    Kmm = kern.K(X, X, X_inducing=True, X2_inducing=True) + torch.eye(num_data, dtype=X.dtype,
+                                                                      device=X.device) * jitter_level
 
-    Knn = kern.K(Xnew, Xnew, X_inducing=False, X2_inducing=False) + torch.eye(Xnew.size(0), dtype=X.dtype, device=X.device) * jitter_level
-    Lm = torch.cholesky(Kmm, upper=False)
-    
+    Knn = kern.K(Xnew, Xnew, X_inducing=False, X2_inducing=False) + torch.eye(Xnew.size(0), dtype=X.dtype,
+                                                                              device=X.device) * jitter_level
+    Lm = torch.linalg.cholesky(Kmm)
+
     # Compute the projection matrix A
-    A, _ = torch.solve(Kmn, Lm)
-    
+    A, _ = torch.linalg.solve(Lm, Kmn)
+
     # compute the covariance due to the conditioning
     if full_cov:
         fvar = kern.K(Xnew, Xnew, X_inducing=False, X2_inducing=False) - torch.matmul(A.t(), A)
-        fvar = fvar.unsqueeze(0).expand(num_func, -1, -1) # K x N x N
+        fvar = fvar.unsqueeze(0).expand(num_func, -1, -1)  # K x N x N
     else:
-        fvar = kern.Kdiag(Xnew, X_inducing=False) - (A**2).sum(0)
-        fvar = fvar.unsqueeze(0).expand(num_func, -1) # K x N
+        fvar = kern.Kdiag(Xnew, X_inducing=False) - (A ** 2).sum(0)
+        fvar = fvar.unsqueeze(0).expand(num_func, -1)  # K x N
     # fvar is K x N x N or K x N
 
-    # another backsubstitution in the unwhitened case 
+    # another backsubstitution in the unwhitened case
     # (complete the inverse of the cholesky decomposition)
     if not whiten:
-        A, _ = torch.solve(A, Lm.t())
+        A, _ = torch.linalg.solve(Lm.t(), A)
 
     # construct the conditional mean
     fmean = torch.matmul(A.t(), f)
@@ -189,11 +191,11 @@ def conditional2(Xnew, X, kern, f, full_cov=False, q_sqrt=None, whiten=False,
         if full_cov:
             fvar = fvar + torch.matmul(LTA.t(), LTA)  # K x N x N
         else:
-            fvar = fvar + (LTA**2).sum(1)  # K x N
-    fvar = fvar.permute(*range(fvar.dim()-1, -1, -1))  # N x K or N x N x K
-    
+            fvar = fvar + (LTA ** 2).sum(1)  # K x N
+    fvar = fvar.permute(*range(fvar.dim() - 1, -1, -1))  # N x K or N x N x K
+
     if return_trace:
-        K_tilde = Knn - A.T@A
+        K_tilde = Knn - A.T @ A
         trace = K_tilde.diagonal(offset=0, dim1=-2, dim2=-1).sum(dim=-1)
 
     if return_Lm:
