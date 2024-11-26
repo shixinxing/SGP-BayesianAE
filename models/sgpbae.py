@@ -43,7 +43,7 @@ class SGPBAE(nn.Module):
 
         if self.optim_gp:
             params += list(self.gp.parameters())
-        
+
         return params
 
     def predict(self, Y, randomness=False, get_mean=True):
@@ -53,25 +53,25 @@ class SGPBAE(nn.Module):
             for i in range(len(self.decoder_samples)):
                 decoder_params, _ = self.load_samples(i)
                 self.decoder_params = decoder_params
-                
+
                 X_pred.append(self.decoder(self.encoder(Y)))
 
             X_pred = torch.stack(X_pred, dim=0)
             if not get_mean:
                 return X_pred
-            
+
             X_pred = torch.mean(X_pred, dim=0)
         else:
             Z = self.encoder(Y)
             X_pred = self.decoder(Z)
-        
+
         return X_pred
 
     def conditional_generate(self, X):
 
         if self.decoder_samples is None:
-            Z = self.gp.predict(X.double())[0]
-            Y = self.decoder.net(Z.float())
+            Z = self.gp.predict(X)[0]  # Removed .double() for compatibility
+            Y = self.decoder.net(Z)  # Removed .float() for compatibility
             return Y, None
         else:
             Y = []
@@ -80,9 +80,9 @@ class SGPBAE(nn.Module):
                 self.decoder_params = decoder_params
                 self.gp_params = gp_params
 
-                Z = self.gp.predict(X.double())[0]
-                Y.append(self.decoder.net(Z.float()))
-            
+                Z = self.gp.predict(X)[0]  # Removed .double() for compatibility
+                Y.append(self.decoder.net(Z))  # Removed .float() for compatibility
+
             Y = torch.stack(Y, dim=0)
             Y_var = torch.var(Y, dim=0)
             Y = torch.mean(Y, dim=0)
@@ -94,7 +94,6 @@ class SGPBAE(nn.Module):
 
         return Z, Y_tilde
 
-
     def decode(self, Z, randomness=False, return_std=False):
         Y = None
         if randomness and (self.decoder_samples is not None):
@@ -104,11 +103,11 @@ class SGPBAE(nn.Module):
                 self.decoder_params = decoder_params
 
                 Y.append(self.decoder(Z))
-            
+
             Y = torch.stack(Y, dim=0)
             x_std = torch.std(Y, dim=0)
             Y = torch.mean(Y, dim=0)
-            
+
             if return_std:
                 return Y, x_std
         else:
@@ -134,9 +133,9 @@ class SGPBAE(nn.Module):
         log_prior += torch.sum(self.decoder_prior.log_prob(self.decoder.net))
 
         gp_log_lik = 0.
-        gp_log_lik += self.gp.log_prob(X.double(), Z.double())
+        gp_log_lik += self.gp.log_prob(X, Z)  # Removed .double() for compatibility
 
-        log_prob = log_lik + log_prior +  gp_log_lik
+        log_prob = log_lik + log_prior + gp_log_lik
 
         return log_prob, log_lik, log_prior, gp_log_lik
 
@@ -148,8 +147,8 @@ class SGPBAE(nn.Module):
             decoder_params = self.decoder_samples[idx]
             gp_params = self.gp_samples[idx]
         else:
-            decoder_params =  torch.load(self.decoder_samples[idx])
-            gp_params =  torch.load(self.gp_samples[idx])
+            decoder_params = torch.load(self.decoder_samples[idx])
+            gp_params = torch.load(self.gp_samples[idx])
 
         return decoder_params, gp_params
 
@@ -169,15 +168,15 @@ class SGPBAE(nn.Module):
         else:
             self.decoder_samples = decoder_files
             self.gp_samples = gp_files
-        
+
         self.loaded_samples = cache
-        
+
     def save_sample(self, sample_dir, idx):
         torch.save(self.decoder_params,
-            os.path.join(sample_dir, "decoder_{:03d}.pt".format(idx)))
+                   os.path.join(sample_dir, "decoder_{:03d}.pt".format(idx)))
         torch.save(self.gp_params,
-            os.path.join(sample_dir, "gp_{:03d}.pt".format(idx)))
-    
+                   os.path.join(sample_dir, "gp_{:03d}.pt".format(idx)))
+
     @property
     def params(self):
         return self.state_dict()
